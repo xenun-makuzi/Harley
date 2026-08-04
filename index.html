@@ -10,6 +10,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@500;600;700;800;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- EmailJS SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
 <style>
 /* =========================================================
    DESIGN TOKENS
@@ -382,9 +384,10 @@ h1,h2,h3{font-family:var(--font-display);font-weight:800;letter-spacing:.01em;li
 
 <header id="site-header">
   <div class="wrap header-row">
-     <img src="logo.jpg" alt="Your Store Logo" class="brand-logo"></span><span id="brand-name">Your Store</span></a>
+     <img src="logo.jpg" alt="Your Store Logo" class="brand-logo"><span id="brand-name">Your Store</span>
     <nav class="main-nav">
       <a href="#/">Home</a>
+      <a href="#/store">Store</a>
       <div class="nav-shop-wrap">
         <span class="nav-shop">Shop ▾</span>
         <div class="shop-drop" id="nav-cat-list"></div>
@@ -408,6 +411,7 @@ h1,h2,h3{font-family:var(--font-display);font-weight:800;letter-spacing:.01em;li
 
 <div id="mobile-nav">
   <a href="#/">Home</a>
+  <a href="#/store">Store</a>
   <div id="mobile-cat-list"></div>
 </div>
 
@@ -428,6 +432,7 @@ h1,h2,h3{font-family:var(--font-display);font-weight:800;letter-spacing:.01em;li
       </div>
       <div>
         <h4>Shop</h4>
+        <a href="#/store" style="font-weight:600;color:var(--text);">All Products</a>
         <div id="footer-cat-list"></div>
       </div>
       <div>
@@ -438,8 +443,8 @@ h1,h2,h3{font-family:var(--font-display);font-weight:800;letter-spacing:.01em;li
       </div>
       <div>
         <h4>Payments</h4>
-        <p>Bank · Zelle · Cash App</p>
-        <p>Chime · Apple Pay · Bitcoin</p>
+        <p>PayPal · Bank · Zelle</p>
+        <p>Cash App · Chime · Apple Pay · Bitcoin</p>
       </div>
     </div>
     <div class="footer-bottom">
@@ -510,6 +515,34 @@ function productMatchesModelYear(p, modelId, year){
 }
 
 /* =========================================================
+   EMAIL JS HELPER
+   ========================================================= */
+async function sendOrderEmail(order, items) {
+  const itemsList = items.map(i => `${i.name} (Qty: ${i.qty}) - $${(i.price * i.qty).toFixed(2)}`).join('\n');
+
+  const templateParams = {
+    order_number: order.order_number,
+    customer_name: order.customer_name,
+    customer_email: order.customer_email,
+    customer_phone: order.customer_phone || 'N/A',
+    shipping_address: `${order.shipping_address}, ${order.shipping_city}, ${order.shipping_region} ${order.shipping_postal_code}, ${order.shipping_country}`,
+    payment_method: order.payment_method,
+    payment_reference: order.payment_reference || 'N/A',
+    order_items: itemsList,
+    subtotal: money(order.subtotal),
+    discount: money(order.discount_amount),
+    total: money(order.total)
+  };
+
+  try {
+    await emailjs.send('YOUR_SERVICE_ID', 'YOUR_TEMPLATE_ID', templateParams);
+    console.log('Order email sent successfully!');
+  } catch (error) {
+    console.error('Failed to send order email:', error);
+  }
+}
+
+/* =========================================================
    DATA LOADING
    ========================================================= */
 async function loadAll(){
@@ -525,6 +558,19 @@ async function loadAll(){
   state.bikeModels = models.data || [];
   state.products = prods.data || [];
   state.paymentMethods = pay.data || [];
+  
+  // Inject PayPal if not already present in Database settings
+  if(!state.paymentMethods.some(m => m.method === 'paypal')){
+    state.paymentMethods.push({
+      id: 'paypal',
+      method: 'paypal',
+      display_name: 'PayPal',
+      instructions: 'You have selected PayPal as your payment option. Please contact our support team to receive the current PayPal payment details to complete your order.',
+      discount_percent: 0,
+      account_details: {}
+    });
+  }
+
   applyBranding();
   renderNavCategories();
 }
@@ -593,6 +639,7 @@ function renderRoute(){
   const parts = parseHash();
   const app = qs('#app');
   if(parts.length===0) return renderHome(app);
+  if(parts[0]==='store') return renderStore(app);
   if(parts[0]==='category') return renderCategory(app, parts[1]);
   if(parts[0]==='product') return renderProductDetail(app, parts[1]);
   if(parts[0]==='fits') return renderFits(app, parts[1]);
@@ -604,34 +651,8 @@ function renderRoute(){
 }
 
 /* =========================================================
-   SHARED: fitment finder + product card + category tile
+   SHARED: product card + category tile
    ========================================================= */
-function fitFinderHTML(prefix){
-  const modelNames = [...new Set(state.bikeModels.map(m=>m.model))].sort();
-  const years = []; const nowY = currentYear()+1;
-  for(let y=nowY;y>=1970;y--) years.push(y);
-  return `
-    <div class="fit-finder">
-      <div class="eyebrow">Fitment Finder</div>
-      <h3>Find Parts For Your Bike</h3>
-      <div class="fit-row">
-        <div class="field"><label>Model</label>
-          <select id="${prefix}-model">
-            <option value="">All Models</option>
-            ${modelNames.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('')}
-          </select>
-        </div>
-        <div class="field"><label>Year</label>
-          <select id="${prefix}-year">
-            <option value="">Any Year</option>
-            ${years.map(y=>`<option value="${y}">${y}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      <button class="btn btn-brass btn-block" data-action="find-fit" data-prefix="${prefix}">Shop Compatible Parts</button>
-    </div>`;
-}
-
 function productCard(p){
   const media = firstMedia(p);
   const img = media ? `<img src="${esc(media.url)}" alt="${esc(p.name)}" loading="lazy">` : placeholderImg();
@@ -697,8 +718,10 @@ function renderHome(app){
           <div class="eyebrow">Genuine Fit Parts Catalog</div>
           <h1 class="h-display">Built For The<br>Road You Ride</h1>
           <p class="lead">${esc(state.store.tagline||'Seats, bags, exhaust and more — matched to your exact model and year.')}</p>
+          <div style="margin-top:24px;">
+            <a href="#/store" class="btn btn-brass" style="padding:14px 28px;">Browse Store Catalog →</a>
+          </div>
         </div>
-        ${fitFinderHTML('hero')}
       </div>
     </section>
 
@@ -715,7 +738,7 @@ function renderHome(app){
 
     ${recent.length?`
     <section class="wrap" style="padding-bottom:70px;">
-      <div class="section-head"><h2 class="h-section">New Arrivals</h2><a href="#/category/${firstCatSlug}">View All →</a></div>
+      <div class="section-head"><h2 class="h-section">New Arrivals</h2><a href="#/store">View All →</a></div>
       <div class="product-grid">${recent.map(productCard).join('')}</div>
     </section>`:''}
 
@@ -754,13 +777,13 @@ function renderHome(app){
           <h2 class="h-section" style="margin-top:8px;">Built By Riders,<br>For Riders</h2>
           <p>We are passionate about motorcycles and committed to providing riders with premium replacement parts and accessories. Every product is carefully selected for quality, compatibility, and long-lasting performance so you can ride with confidence.</p>
           <div class="about-actions">
-            <a href="#/category/${firstCatSlug}" class="btn btn-brass">Shop Parts</a>
+            <a href="#/store" class="btn btn-brass">Shop Parts</a>
             <a href="mailto:${esc(state.store.contact_email||'')}" class="btn">Contact Us</a>
           </div>
         </div>
         <div class="about-art reveal">
-    <img src="logo.jpg" alt="Custom motorcycle" class="about-image">
-</div>
+            <img src="logo.jpg" alt="Custom motorcycle" class="about-image">
+        </div>
       </div>
     </section>
 
@@ -782,7 +805,6 @@ function renderHome(app){
 
     <section class="wrap" style="padding:64px 0;">
       <div class="section-head"><h2 class="h-section reveal">Customer Reviews</h2></div>
-      <!-- Sample testimonials — swap in real customer reviews as they come in -->
       <div class="reviews-grid">
         <div class="review-card reveal"><div class="review-stars">★★★★★</div><p class="review-quote">"Perfect fit for my Road King. Shipping was incredibly fast."</p><div class="review-author">— Michael R.</div></div>
         <div class="review-card reveal"><div class="review-stars">★★★★★</div><p class="review-quote">"Excellent quality and great customer service."</p><div class="review-author">— Daniel T.</div></div>
@@ -808,8 +830,8 @@ function renderHome(app){
         ${faqItem('How long does shipping take?','Usually 2–7 business days depending on your location.')}
         ${faqItem('Are your parts genuine?','We offer genuine OEM and premium aftermarket parts clearly labeled on each product.')}
         ${faqItem('Can I return a part?','Yes, unused parts may be returned within our return window.')}
-        ${faqItem('How do I know a part fits my motorcycle?','Use the Fitment Finder or contact our support team.')}
-        ${faqItem('Which payment methods do you accept?','Bank transfer, Cash App, Apple Pay, Zelle, Chime, Bitcoin, and any others you configure in the admin panel.')}
+        ${faqItem('How do I know a part fits my motorcycle?','Contact our support team for specialized fitment assistance.')}
+        ${faqItem('Which payment methods do you accept?','PayPal, Bank transfer, Cash App, Apple Pay, Zelle, Chime, Bitcoin, and any others you configure in the admin panel.')}
       </div>
     </section>
 
@@ -828,7 +850,7 @@ function renderHome(app){
       <div class="wrap">
         <h2 class="h-display reveal" style="font-size:clamp(30px,4.4vw,48px);">Ready To Upgrade Your Ride?</h2>
         <p class="reveal">Premium parts trusted by riders nationwide.</p>
-        <a href="#/category/${firstCatSlug}" class="btn btn-brass reveal" style="padding:15px 34px;font-size:15px;">Shop Now</a>
+        <a href="#/store" class="btn btn-brass reveal" style="padding:15px 34px;font-size:15px;">Shop Store</a>
       </div>
     </section>
   `;
@@ -900,44 +922,55 @@ function initHomeExtras(){
 }
 
 /* =========================================================
-   VIEW: CATEGORY
+   VIEW: STORE (Contains the main filter)
    ========================================================= */
-function renderCategory(app, slug){
-  const cat = state.categories.find(c=>c.slug===slug);
-  if(!cat){ app.innerHTML = emptyState('Category not found','Pick a category from the menu above.'); return; }
+function renderStore(app){
   const modelNames = [...new Set(state.bikeModels.map(m=>m.model))].sort();
   app.innerHTML = `
-    <div class="wrap" style="padding-top:26px;">
-      <div class="crumbs"><a href="#/">Home</a> / ${esc(cat.name)}</div>
-      <div class="section-head"><h1 class="h-section">${esc(cat.name)}</h1></div>
+    <div class="wrap" style="padding-top:26px; padding-bottom: 64px;">
+      <div class="crumbs"><a href="#/">Home</a> / Store</div>
+      <div class="section-head"><h1 class="h-section">Store Catalog</h1></div>
       <div class="filter-bar">
+        <div class="field"><label>Category</label>
+          <select id="store-filter-cat">
+            <option value="">All Categories</option>
+            ${state.categories.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+          </select>
+        </div>
         <div class="field"><label>Model</label>
-          <select id="filter-model"><option value="">All Models</option>${modelNames.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('')}</select>
+          <select id="store-filter-model"><option value="">All Models</option>${modelNames.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('')}</select>
         </div>
         <div class="field"><label>Year</label>
-          <select id="filter-year"><option value="">Any Year</option>${Array.from({length:currentYear()+1-1970+1},(_,i)=>currentYear()+1-i).map(y=>`<option value="${y}">${y}</option>`).join('')}</select>
+          <select id="store-filter-year"><option value="">Any Year</option>${Array.from({length:currentYear()+1-1970+1},(_,i)=>currentYear()+1-i).map(y=>`<option value="${y}">${y}</option>`).join('')}</select>
         </div>
         <div class="field"><label>Sort</label>
-          <select id="filter-sort">
+          <select id="store-filter-sort">
             <option value="new">Newest</option>
             <option value="price-asc">Price: Low to High</option>
             <option value="price-desc">Price: High to Low</option>
           </select>
         </div>
-        <button class="btn" data-action="apply-filter">Apply</button>
       </div>
-      <div id="grid-host"></div>
+      <div id="store-grid-host"></div>
     </div>`;
-  renderCategoryGrid(cat.id);
-  qs('#filter-model').addEventListener('change', ()=>renderCategoryGrid(cat.id));
-  qs('#filter-year').addEventListener('change', ()=>renderCategoryGrid(cat.id));
-  qs('#filter-sort').addEventListener('change', ()=>renderCategoryGrid(cat.id));
+  renderStoreGrid();
+  qs('#store-filter-cat').addEventListener('change', renderStoreGrid);
+  qs('#store-filter-model').addEventListener('change', renderStoreGrid);
+  qs('#store-filter-year').addEventListener('change', renderStoreGrid);
+  qs('#store-filter-sort').addEventListener('change', renderStoreGrid);
 }
-function renderCategoryGrid(categoryId){
-  const modelName = qs('#filter-model')?qs('#filter-model').value:'';
-  const year = qs('#filter-year')?qs('#filter-year').value:'';
-  const sort = qs('#filter-sort')?qs('#filter-sort').value:'new';
-  let list = state.products.filter(p=>p.category_id===categoryId);
+
+function renderStoreGrid(){
+  const catId = qs('#store-filter-cat')?qs('#store-filter-cat').value:'';
+  const modelName = qs('#store-filter-model')?qs('#store-filter-model').value:'';
+  const year = qs('#store-filter-year')?qs('#store-filter-year').value:'';
+  const sort = qs('#store-filter-sort')?qs('#store-filter-sort').value:'new';
+  
+  let list = state.products.slice();
+  
+  if(catId){
+    list = list.filter(p=>p.category_id === catId);
+  }
   if(modelName){
     const modelIds = state.bikeModels.filter(m=>m.model===modelName).map(m=>m.id);
     list = list.filter(p=>{
@@ -946,15 +979,31 @@ function renderCategoryGrid(categoryId){
       return fits.some(f=>modelIds.includes(f.bike_model_id) && (!year || productMatchesModelYear(p, f.bike_model_id, year)));
     });
   }
-  if(sort==='price-asc') list = list.slice().sort((a,b)=>a.price-b.price);
-  else if(sort==='price-desc') list = list.slice().sort((a,b)=>b.price-a.price);
-  const host = qs('#grid-host');
-  if(list.length===0){ host.innerHTML = emptyState('No parts match that fitment', 'Try a different model or year, or browse the full category.'); return; }
+  if(sort==='price-asc') list.sort((a,b)=>a.price-b.price);
+  else if(sort==='price-desc') list.sort((a,b)=>b.price-a.price);
+
+  const host = qs('#store-grid-host');
+  if(list.length===0){ host.innerHTML = emptyState('No parts match that selection', 'Try selecting different filters.'); return; }
   host.innerHTML = `<div class="product-grid">${list.map(productCard).join('')}</div>`;
 }
 
 /* =========================================================
-   VIEW: FITS (from fitment finder)
+   VIEW: CATEGORY (Filters removed - straight manual view)
+   ========================================================= */
+function renderCategory(app, slug){
+  const cat = state.categories.find(c=>c.slug===slug);
+  if(!cat){ app.innerHTML = emptyState('Category not found','Pick a category from the menu above.'); return; }
+  const list = state.products.filter(p=>p.category_id===cat.id);
+  app.innerHTML = `
+    <div class="wrap" style="padding-top:26px; padding-bottom: 64px;">
+      <div class="crumbs"><a href="#/">Home</a> / ${esc(cat.name)}</div>
+      <div class="section-head"><h1 class="h-section">${esc(cat.name)}</h1></div>
+      ${list.length ? `<div class="product-grid">${list.map(productCard).join('')}</div>` : emptyState('No items in this category', 'Please check back soon or browse other categories.')}
+    </div>`;
+}
+
+/* =========================================================
+   VIEW: FITS
    ========================================================= */
 function renderFits(app, key){
   const [modelName, year] = decodeURIComponent(key).split('|');
@@ -964,7 +1013,7 @@ function renderFits(app, key){
     return fits.some(f=>modelIds.includes(f.bike_model_id) && (!year || productMatchesModelYear(p, f.bike_model_id, year)));
   });
   app.innerHTML = `
-    <div class="wrap" style="padding-top:26px;">
+    <div class="wrap" style="padding-top:26px; padding-bottom: 64px;">
       <div class="crumbs"><a href="#/">Home</a> / Fitment Results</div>
       <div class="section-head"><h1 class="h-section">Parts for ${esc(modelName||'Your Bike')}${year?' · '+esc(year):''}</h1></div>
       ${list.length? `<div class="product-grid">${list.map(productCard).join('')}</div>` : emptyState('No compatible parts yet','Check back soon, or browse all categories.')}
@@ -978,7 +1027,7 @@ function renderSearch(app, query){
   const q = query.toLowerCase();
   const list = state.products.filter(p=> (p.name||'').toLowerCase().includes(q) || (p.description||'').toLowerCase().includes(q) || (p.sku||'').toLowerCase().includes(q));
   app.innerHTML = `
-    <div class="wrap" style="padding-top:26px;">
+    <div class="wrap" style="padding-top:26px; padding-bottom: 64px;">
       <div class="crumbs"><a href="#/">Home</a> / Search</div>
       <div class="section-head"><h1 class="h-section">Results for "${esc(query)}"</h1></div>
       ${list.length? `<div class="product-grid">${list.map(productCard).join('')}</div>` : emptyState('No parts matched your search','Try a broader term, or browse by category.')}
@@ -1033,7 +1082,7 @@ function mediaTag(m){ return m.media_type==='video' ? `<video src="${esc(m.url)}
    VIEW: CART
    ========================================================= */
 function renderCart(app){
-  if(state.cart.length===0){ app.innerHTML = `<div class="wrap">${emptyState('Your cart is empty','Find the right part with the fitment finder, or browse a category.')}<div style="text-align:center;"><a href="#/" class="btn btn-brass">Start Shopping</a></div></div>`; return; }
+  if(state.cart.length===0){ app.innerHTML = `<div class="wrap">${emptyState('Your cart is empty','Browse our catalog to add items to your cart.')}<div style="text-align:center;"><a href="#/store" class="btn btn-brass">Start Shopping</a></div></div>`; return; }
   app.innerHTML = `
     <div class="wrap cart-layout">
       <div>
@@ -1134,7 +1183,6 @@ function renderCheckout(app){
       </div>
     </div>`;
 
-  // populate form from state on change (keeps state in sync without losing focus)
   qs('#checkout-form').addEventListener('input', e=>{
     const n = e.target.name;
     if(n) state.checkoutForm[n] = e.target.value;
@@ -1175,7 +1223,7 @@ function checkoutSummaryHTML(){
   const sub = cartSubtotal(), disc = currentDiscount(), tot = currentTotal();
   return `
     <div class="summary-row"><span>Subtotal</span><span class="amt">${money(sub)}</span></div>
-    ${disc>0?`<div class="summary-row discount-row"><span>Bitcoin Discount</span><span class="amt">−${money(disc)}</span></div>`:''}
+    ${disc>0?`<div class="summary-row discount-row"><span>Discount</span><span class="amt">−${money(disc)}</span></div>`:''}
     <div class="summary-row total"><span>Total</span><span class="amt">${money(tot)}</span></div>`;
 }
 
@@ -1214,6 +1262,9 @@ async function placeOrder(){
     const items = state.cart.map(i=>({ order_id:order.id, product_id:i.id, product_name:i.name, sku:i.sku, unit_price:i.price, quantity:i.qty, line_total:+(i.price*i.qty).toFixed(2) }));
     const { error: itemErr } = await supabaseC.from('order_items').insert(items);
     if(itemErr) throw itemErr;
+
+    // Send the email via EmailJS
+    await sendOrderEmail(order, state.cart);
 
     state.lastOrder = { ...order, items: state.cart.slice() };
     state.cart = [];
@@ -1283,14 +1334,6 @@ document.addEventListener('click', e=>{
     qs('#pd-main').innerHTML = t.dataset.type==='video' ? `<video src="${t.dataset.url}" controls></video>` : `<img src="${t.dataset.url}">`;
     qsa('.pd-thumb').forEach(x=>x.classList.remove('active')); t.classList.add('active');
   }
-  if(action==='apply-filter'){ /* handled via change listeners already; no-op */ }
-  if(action==='find-fit'){
-    const prefix = t.dataset.prefix;
-    const model = qs(`#${prefix}-model`).value;
-    const year = qs(`#${prefix}-year`).value;
-    if(!model){ toast('Choose a model to search fitment.','error'); return; }
-    navigate('/fits/'+encodeURIComponent(model+'|'+year));
-  }
   if(action==='toggle-faq'){
     t.closest('.faq-item').classList.toggle('open');
   }
@@ -1316,6 +1359,7 @@ backToTopBtn.addEventListener('click', ()=>window.scrollTo({top:0, behavior:'smo
    INIT
    ========================================================= */
 async function init(){
+  emailjs.init("YOUR_EMAILJS_PUBLIC_KEY");
   qs('#app').innerHTML = `<div class="loading-row">Loading catalog…</div>`;
   await loadAll();
   updateCartBadge();
